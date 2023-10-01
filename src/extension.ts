@@ -236,31 +236,49 @@ export function activate(context: vscode.ExtensionContext) {
 		return socket;
 	}
 
+	const cacheDirName = path.join(".mayacode", ".cache");
+	function getWritePath(fileName: string) {
+		const containerWorkspaceFolder = process.env.CONTAINER_WORKSPACE_FOLDER;
+		if (containerWorkspaceFolder) {
+			const cacheDir = path.join(containerWorkspaceFolder, cacheDirName);
+			if (!fs.existsSync(cacheDir)) {
+				fs.mkdirSync(cacheDir, { recursive: true });
+			}
+			return path.join(cacheDir, fileName);
+		}
+		return path.join(os.tmpdir(), fileName);
+	}
+
+	function getReadPath(writePath:string, fileName: string) {
+		const localWorkspaceFolder = process.env.LOCAL_WORKSPACE_FOLDER;
+		if (localWorkspaceFolder) {
+			const readPath = path.join(localWorkspaceFolder, cacheDirName, fileName);
+			return readPath.replace(/\\/g, "/");
+		}
+		return writePath.replace(/\\/g, "/");
+	}
+
 	function send_tmp_file(text: string, type: string) {
-		let cmd:string, nativePath:string, posixPath:string;
+		let cmd:string, writePath:string, readPath:string;
 
 		if (type == 'python') {
 			//add encoding http://python.org/dev/peps/pep-0263/
 			text = "# -*- coding: utf-8 -*-\n" + text;
-			nativePath = path.join(os.tmpdir(), "MayaCode.py");
-			posixPath = nativePath.replace(/\\/g, "/");
-			if(config.get('runner.latest')){
-				cmd = `python("exec(open('${posixPath}').read())")`;
-			}else{
-				cmd = `python("execfile('${posixPath}')")`;
-			}
+			writePath = getWritePath("MayaCode.py");
+			readPath = getReadPath(writePath, "MayaCode.py");
+			cmd = config.get('runner.latest') ?
+				`python("exec(open('${readPath}').read())")` :
+				`python("execfile('${readPath}')")`;
+		} else if (type == 'mel') {
+			writePath = getWritePath("MayaCode.mel");
+			readPath = getReadPath(writePath, "MayaCode.mel");
+			cmd = `source \"${readPath}\";`;
 		}
 
-		if (type == 'mel') {
-			nativePath = path.join(os.tmpdir(), "MayaCode.mel");
-			posixPath = nativePath.replace(/\\/g, "/");
-			cmd = `source \"${posixPath}\";`;
-		}
-
-		Logger.info(`Writing text to ${posixPath}...`);
-		fs.writeFile(nativePath, text, function (err) {
+		Logger.info(`Writing text to ${readPath}...`);
+		fs.writeFile(writePath, text, function (err) {
 			if (err) {
-				Logger.error(`Failed to write ${type} to temp file ${posixPath}`);
+				Logger.error(`Failed to write ${type} to temp file ${readPath}`);
 			} else {
 				Logger.info(`Executing ${cmd}...`);
 				send(cmd, type);
